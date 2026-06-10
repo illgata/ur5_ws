@@ -1,0 +1,2 @@
+red_box
+blue_box

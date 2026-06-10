@@ -1,0 +1,18 @@
+# ROS 2 build outputs
+build/
+install/
+log/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Editor and OS metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Runtime logs and temporary files
+*.log
+*.tmp

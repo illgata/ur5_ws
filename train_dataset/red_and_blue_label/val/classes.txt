@@ -1,0 +1,3 @@
+blue_box
+red
+red_box
