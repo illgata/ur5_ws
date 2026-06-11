@@ -2,6 +2,24 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
+struct ClassifiedGraspTask {
+  std::string class_name;
+  std::string frame_name;
+  std::vector<double> grasp_pose;
+  std::vector<double> place_pose;
+};
+
+std::vector<double> offset_z(const std::vector<double> &pose, double dz) {
+  std::vector<double> result = pose;
+  if (result.size() >= 3) {
+    result[2] += dz;
+  }
+  return result;
+}
+
+void short_pause() {
+  rclcpp::sleep_for(std::chrono::milliseconds(300));
+}
 
 int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
@@ -18,46 +36,90 @@ int main(int argc, char **argv) {
   std::vector<std::vector<double>> target_pose_list;
   node->get_target_pose_list(target_pose_list);
   std::string from_frame = "base_link";
-  std::vector<std::string> to_frame_list = {"cube1", "cube2", "cube3", "cube4", "cube5", "cube6"};
 
-  std::vector<std::vector<double>> cube_pose_list;
-  for (size_t i = 0; i < to_frame_list.size(); i++) {
-    std::vector<double> cube_pose;
-    node->get_cube_pose(from_frame, to_frame_list[i], cube_pose);
-    if (cube_pose.empty()) {
-      RCLCPP_WARN(rclcpp::get_logger("demo4"), "Failed to get pose for %s, skipping", to_frame_list[i].c_str());
+  const std::vector<std::pair<std::string, size_t>> class_place_indices = {
+      {"red_box", 0},
+      {"blue_box", 1},
+  };
+
+  std::vector<ClassifiedGraspTask> grasp_tasks;
+  for (const auto &[class_name, place_index] : class_place_indices) {
+    if (place_index >= target_pose_list.size()) {
+      RCLCPP_ERROR(rclcpp::get_logger("classified_grasp"),
+                   "No target pose configured for class %s at index %zu",
+                   class_name.c_str(), place_index);
       continue;
     }
 
-    cube_pose[0] -= 0.012 ;
-    cube_pose[1] += 0.01;
-    //cube_pose[2] += 0.14;
-    cube_pose[2] += 0.14;
-    cube_pose[3] = 0.0;
-    cube_pose[4] = M_PI;
-    cube_pose[5] = 0.0;
-    RCLCPP_INFO(rclcpp::get_logger("demo4"), "Adjusted cube pose for %s: x=%f, y=%f, z=%f",
-                to_frame_list[i].c_str(), cube_pose[0], cube_pose[1], cube_pose[2]);
-    cube_pose_list.push_back(cube_pose);
+    for (size_t i = 1; i <= 6; i++) {
+      const std::string frame_name = class_name + std::to_string(i);
+      std::vector<double> object_pose;
+      node->get_cube_pose(from_frame, frame_name, object_pose);
+      if (object_pose.empty()) {
+        continue;
+      }
+
+      object_pose[0] -= 0.012;
+      object_pose[1] += 0.01;
+      object_pose[2] += 0.14;
+      object_pose[3] = 0.0;
+      object_pose[4] = M_PI;
+      object_pose[5] = 0.0;
+
+      RCLCPP_INFO(rclcpp::get_logger("classified_grasp"),
+                  "Detected %s as %s: x=%f, y=%f, z=%f",
+                  class_name.c_str(), frame_name.c_str(),
+                  object_pose[0], object_pose[1], object_pose[2]);
+      grasp_tasks.push_back({class_name, frame_name, object_pose, target_pose_list[place_index]});
+    }
   }
 
-  for (size_t i = 0; i < std::min<size_t>(6, cube_pose_list.size()); i++) {
-    bool grasp_success = node->plan_and_execute(cube_pose_list[i]);
+  for (const auto &task : grasp_tasks) {
+    RCLCPP_INFO(rclcpp::get_logger("classified_grasp"),
+                "Grasping %s (%s)", task.frame_name.c_str(), task.class_name.c_str());
+
+    bool grasp_success = node->plan_and_execute(task.grasp_pose);
     if (!grasp_success) {
       continue;
     }
     node->grasp(0.36);
-    rclcpp::sleep_for(std::chrono::seconds(1));
+    short_pause();
 
-    if (i < target_pose_list.size()) {
-      bool place_success = node->plan_and_execute(target_pose_list[i]);
-      if (place_success) {
-        node->grasp(0);
-        rclcpp::sleep_for(std::chrono::seconds(1));
-      }
+    std::vector<double> lift_pose = offset_z(task.grasp_pose, 0.12);
+    std::vector<double> place_approach_pose = offset_z(task.place_pose, 0.12);
+
+    bool lift_success = node->plan_and_execute(lift_pose);
+    if (!lift_success) {
+      RCLCPP_WARN(rclcpp::get_logger("classified_grasp"),
+                  "Failed to lift %s after grasp, opening gripper and skipping",
+                  task.frame_name.c_str());
+      node->grasp(0);
+      short_pause();
+      continue;
     }
-	
+
+    bool approach_success = node->plan_and_execute(place_approach_pose);
+    if (!approach_success) {
+      RCLCPP_WARN(rclcpp::get_logger("classified_grasp"),
+                  "Failed to reach place approach pose for %s, opening gripper and skipping",
+                  task.frame_name.c_str());
+      node->grasp(0);
+      short_pause();
+      continue;
+    }
+
+    bool place_success = node->plan_and_execute(task.place_pose);
+    if (!place_success) {
+      RCLCPP_WARN(rclcpp::get_logger("classified_grasp"),
+                  "Failed to reach final place pose for %s, opening gripper at approach pose",
+                  task.frame_name.c_str());
+    }
+
+    node->grasp(0);
+    short_pause();
+    node->plan_and_execute(place_approach_pose);
   }
+
   node->go_to_ready_position();
   rclcpp::shutdown();
   return 0;

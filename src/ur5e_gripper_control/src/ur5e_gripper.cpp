@@ -30,6 +30,10 @@ void UR5eGripper::init() {
   /* create move group interface */
   move_group_ = std::make_shared<moveit::planning_interface::MoveGroupInterface>(
       shared_from_this(), PLANNING_GROUP);
+  move_group_->setPlanningTime(5.0);
+  move_group_->setNumPlanningAttempts(3);
+  move_group_->setMaxVelocityScalingFactor(0.7);
+  move_group_->setMaxAccelerationScalingFactor(0.7);
 }
 
 void UR5eGripper::goal_response_callback(const GoalHandleGripperCommand::SharedPtr &goal_handle) {
@@ -144,8 +148,8 @@ void UR5eGripper::get_cube_pose(const std::string &from_frame, const std::string
   try {
     tf_msg = tf_buffer_->lookupTransform(from_frame, to_frame, tf2::TimePointZero);
   } catch (tf2::TransformException &ex) {
-    RCLCPP_ERROR(this->get_logger(), "%s", ex.what());
-    rclcpp::shutdown();
+    RCLCPP_WARN(this->get_logger(), "Failed to get transform %s -> %s: %s",
+                from_frame.c_str(), to_frame.c_str(), ex.what());
     return;
   }
   cube_pose.push_back(tf_msg.transform.translation.x);

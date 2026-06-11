@@ -16,3 +16,12 @@ Thumbs.db
 # Runtime logs and temporary files
 *.log
 *.tmp
+
+# Generated YOLO training artifacts
+yolo_training/
+runs/
+yolo*.pt
+
+# Local world backups/import scratch files
+*.world.backup-*
+/world
